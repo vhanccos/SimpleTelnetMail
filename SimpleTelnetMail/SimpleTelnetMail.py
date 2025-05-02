@@ -2,6 +2,11 @@ from telnetlib import Telnet
 from ssl import _create_stdlib_context
 from base64 import b64decode, b64encode
 from hmac import new
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import os
 
 """ This file implement the TelnetMail class. """
 
@@ -47,6 +52,7 @@ class TelnetMail:
         debug: int = 0,
         username: str = None,
         password: str = None,
+        attachments: list = None,
         **kwargs,
     ):
 
@@ -70,6 +76,7 @@ class TelnetMail:
         self.debug = debug
         self.username = username
         self.password = password
+        self.attachments = attachments or []
 
     def __repr__(self):
         return f"<TelnetMail : SERVER={self.host}:{self.port} COMPUTERNAME={self.ehlo} FROM={self.from_} TO={self.to} SSL={self.ssl}>"
@@ -102,7 +109,12 @@ class TelnetMail:
             key = key.replace("_", "-")
             headers_string += f"{key}: {value}\n"
 
-        self.message = headers_string + "\n\r" + self.message
+        # self.message = headers_string + "\n\r" + self.message
+        if self.attachments:
+            self.message = self.build_mime_message()
+        else:
+            self.message = headers_string + "\n\r" + self.message
+
 
     def get_response(self, client, starttls=False):
 
@@ -250,6 +262,34 @@ class TelnetMail:
         except ConnectionAbortedError:
             pass
 
+    def build_mime_message(self):
+        """Build a MIME message with attachments."""
+
+        msg = MIMEMultipart()
+        msg['From'] = self.headers.get("From", self.from_)
+        msg['To'] = ", ".join(self.to)
+        msg['Subject'] = self.headers.get("Subject", "Email with attachments")
+
+        # Add custom headers
+        for key, value in self.headers.items():
+            if key not in msg:
+                msg[key.replace("_", "-")] = value
+
+        # Attach the text body
+        msg.attach(MIMEText(self.message, 'plain'))
+
+        # Attach each file
+        for filepath in self.attachments:
+            filename = os.path.basename(filepath)
+            with open(filepath, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={filename}")
+                msg.attach(part)
+
+        return msg.as_string()
+
 
 def simple_usage():
     client = TelnetMail(
@@ -331,11 +371,12 @@ def main():
         "username": False,
         "password": False,
     }
+    
     headers = {}
 
     optlist, args = getopt(
         argv[1:],
-        "H:p:f:t:e:m:P:d:U:W:s",
+        "H:p:f:t:e:m:P:d:U:W:A:s",
         [
             "host=",
             "port=",
@@ -347,6 +388,7 @@ def main():
             "debug=",
             "username=",
             "password=",
+            "attachments=",
             "ssl",
         ],
     )
@@ -378,6 +420,8 @@ def main():
             arguments["password"] = argument[1]
         elif argument[0] == "--ssl" or argument[0] == "-s":
             arguments["ssl"] = True
+        elif argument[0] == "--attachments" or argument[0] == "-A":
+            arguments["attachments"] = argument[1]
         elif argument[0] == "--debug" or argument[0] == "-d":
             try:
                 arguments["debug"] = int(argument[1])
@@ -420,6 +464,7 @@ def main():
     client.username = arguments["username"]
     client.password = arguments["password"]
     client.headers = headers
+    client.attachments= arguments["attachments"].split(",")
 
     print("Sending the mail...")
     client.send_mail()
@@ -466,3 +511,4 @@ EXAMPLES :
 
 if __name__ == "__main__":
     main()
+
